@@ -1,0 +1,32 @@
+# One-click deploy on Render (https://render.com). Push this repo, then
+# "New +" -> "Blueprint" and point it at your fork. Fill in the AI/SMS
+# values in the dashboard (they are marked sync:false so they aren't
+# committed to git).
+services:
+  - type: web
+    name: valet-ticket-system
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /login.html
+    envVars:
+      - key: DB_PATH
+        value: /data/valet.db
+      - key: PUBLIC_BASE_URL
+        sync: false # e.g. https://your-app.onrender.com (used for QR links)
+      - key: SIGNUP_CODE
+        sync: false # optional: require this code to create extra accounts
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+    disk:
+      name: valet-data
+      mountPath: /data
+      sizeGB: 1

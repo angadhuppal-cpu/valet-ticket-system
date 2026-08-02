@@ -37,7 +37,7 @@ export async function sendSms(to, body) {
 }
 
 // Compose the ticket confirmation message sent to an owner.
-export function ticketMessage(ticket, eventName) {
+export function ticketMessage(ticket, eventName, link) {
   const lines = [
     `${eventName}: your car is parked with the valet.`,
     `Ticket #${ticket.ticket_number}`,
@@ -47,5 +47,9 @@ export function ticketMessage(ticket, eventName) {
   if (ticket.plate) lines.push(`Plate: ${ticket.plate}`);
   lines.push('');
   lines.push('Reply with your ticket number when you are ready and we will have it waiting.');
+  if (link) {
+    lines.push('');
+    lines.push(`Or tap to request it: ${link}`);
+  }
   return lines.join('\n');
 }

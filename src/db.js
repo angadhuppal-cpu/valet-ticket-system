@@ -3,6 +3,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 const DB_PATH = process.env.DB_PATH || './data/valet.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -11,6 +12,21 @@ export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
   PRAGMA journal_mode = WAL;
+
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    display_name  TEXT,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+  );
 
   CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +46,7 @@ db.exec(`
     notes         TEXT,
     status        TEXT NOT NULL DEFAULT 'parked',
     notified      INTEGER NOT NULL DEFAULT 0,
+    public_token  TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(event_id, ticket_number)
@@ -45,6 +62,24 @@ db.exec(`
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// --- lightweight migrations for databases created before a column existed ---
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('tickets', 'public_token', 'TEXT');
+
+export function newToken(bytes = 18) {
+  return randomBytes(bytes).toString('base64url');
+}
+
+// Backfill share tokens for any legacy tickets missing one.
+for (const row of db.prepare('SELECT id FROM tickets WHERE public_token IS NULL').all()) {
+  db.prepare('UPDATE tickets SET public_token = ? WHERE id = ?').run(newToken(), row.id);
+}
 
 // Ensure there is always an active event to attach tickets to.
 export function getActiveEvent() {

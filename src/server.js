@@ -1,16 +1,32 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { db, getActiveEvent, nextTicketNumber } from './db.js';
+import { db, getActiveEvent, nextTicketNumber, newToken } from './db.js';
 import { analyzeCarPhotos, aiEnabled } from './services/ai.js';
 import { sendSms, smsEnabled, ticketMessage } from './services/sms.js';
+import { shareUrl, qrSvg } from './services/share.js';
+import {
+  attachUser,
+  requireAuth,
+  createUser,
+  authenticate,
+  createSession,
+  destroySession,
+  setSessionCookie,
+  clearSessionCookie,
+  userCount,
+  SIGNUP_CODE,
+} from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const publicDir = join(__dirname, '..', 'public');
 const app = express();
+app.set('trust proxy', true);
 
 // Photos are base64-encoded in JSON, so allow a generous body size.
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
+app.use(attachUser);
 
 // ---------- helpers ----------
 
@@ -28,12 +44,114 @@ function getTicket(id) {
   return db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
 }
 
+function getTicketByToken(token) {
+  return db.prepare('SELECT * FROM tickets WHERE public_token = ?').get(token);
+}
+
 function logMessage({ ticketId, direction, body, counterpart, delivered }) {
   db.prepare(
     `INSERT INTO messages (ticket_id, direction, body, counterpart, delivered)
      VALUES (?, ?, ?, ?, ?)`
   ).run(ticketId ?? null, direction, body, counterpart ?? null, delivered ? 1 : 0);
 }
+
+const STATUS_LABEL = { parked: 'Parked', requested: 'Requested', ready: 'Ready', delivered: 'Delivered' };
+
+// ---------- auth routes (public) ----------
+
+app.get('/api/auth/status', (req, res) => {
+  res.json({
+    authenticated: Boolean(req.user),
+    user: req.user || null,
+    hasUsers: userCount() > 0,
+    signupCodeRequired: Boolean(SIGNUP_CODE) && userCount() > 0,
+  });
+});
+
+app.post('/api/auth/signup', (req, res) => {
+  try {
+    const { username, password, displayName, code } = req.body || {};
+    // First account bootstraps the system; later signups honor SIGNUP_CODE.
+    if (SIGNUP_CODE && userCount() > 0 && code !== SIGNUP_CODE) {
+      return res.status(403).json({ error: 'Invalid or missing signup code.' });
+    }
+    const user = createUser({ username, password, displayName });
+    const token = createSession(user.id);
+    setSessionCookie(res, token, req);
+    res.status(201).json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const user = authenticate(username, password);
+  if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
+  const token = createSession(user.id);
+  setSessionCookie(res, token, req);
+  res.json({ user });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  destroySession(req.sessionToken);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// ---------- public owner-facing ticket routes (by unguessable token) ----------
+
+async function publicTicketPayload(req, ticket) {
+  const event = db.prepare('SELECT name FROM events WHERE id = ?').get(ticket.event_id);
+  const url = shareUrl(req, ticket.public_token);
+  return {
+    ticket_number: ticket.ticket_number,
+    make_model: ticket.make_model,
+    color: ticket.color,
+    plate: ticket.plate,
+    status: ticket.status,
+    status_label: STATUS_LABEL[ticket.status] || ticket.status,
+    event_name: event?.name || 'Valet',
+    share_url: url,
+    qr_svg: await qrSvg(url),
+  };
+}
+
+app.get('/api/t/:token', async (req, res) => {
+  const ticket = getTicketByToken(req.params.token);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  res.json(await publicTicketPayload(req, ticket));
+});
+
+// Owner taps "Request my car" on the scanned page.
+app.post('/api/t/:token/request', async (req, res) => {
+  const ticket = getTicketByToken(req.params.token);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  if (ticket.status !== 'delivered') {
+    db.prepare("UPDATE tickets SET status = 'requested', updated_at = datetime('now') WHERE id = ?").run(
+      ticket.id
+    );
+    logMessage({
+      ticketId: ticket.id,
+      direction: 'in',
+      body: `Requested pickup via QR page (ticket #${ticket.ticket_number})`,
+      counterpart: ticket.phone,
+      delivered: true,
+    });
+  }
+  res.json(await publicTicketPayload(req, getTicket(ticket.id)));
+});
+
+// ---------- auth gate for everything else under /api ----------
+
+app.use('/api', (req, res, next) => {
+  const open =
+    req.path.startsWith('/auth/') ||
+    req.path.startsWith('/t/') ||
+    req.path === '/sms/inbound'; // Twilio webhook must stay public
+  if (open) return next();
+  return requireAuth(req, res, next);
+});
 
 // ---------- config / status ----------
 
@@ -42,6 +160,7 @@ app.get('/api/config', (req, res) => {
   res.json({
     aiEnabled,
     smsEnabled,
+    user: req.user,
     event: { id: event.id, name: event.name },
   });
 });
@@ -89,8 +208,8 @@ app.post('/api/tickets', (req, res) => {
   const number = nextTicketNumber(event.id);
   const info = db
     .prepare(
-      `INSERT INTO tickets (event_id, ticket_number, phone, plate, make_model, color, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tickets (event_id, ticket_number, phone, plate, make_model, color, notes, public_token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       event.id,
@@ -99,7 +218,8 @@ app.post('/api/tickets', (req, res) => {
       (req.body?.plate || '').trim() || null,
       (req.body?.make_model || '').trim() || null,
       (req.body?.color || '').trim() || null,
-      (req.body?.notes || '').trim() || null
+      (req.body?.notes || '').trim() || null,
+      newToken()
     );
   res.status(201).json(getTicket(info.lastInsertRowid));
 });
@@ -142,7 +262,7 @@ app.post('/api/tickets/:id/notify', async (req, res) => {
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   const event = getActiveEvent();
 
-  const body = ticketMessage(ticket, event.name);
+  const body = ticketMessage(ticket, event.name, shareUrl(req, ticket.public_token));
   const result = await sendSms(ticket.phone, body);
   logMessage({
     ticketId: ticket.id,
@@ -171,7 +291,7 @@ app.post('/api/tickets/notify-all', async (req, res) => {
 
   const results = [];
   for (const ticket of tickets) {
-    const body = ticketMessage(ticket, event.name);
+    const body = ticketMessage(ticket, event.name, shareUrl(req, ticket.public_token));
     const result = await sendSms(ticket.phone, body);
     logMessage({
       ticketId: ticket.id,
@@ -274,13 +394,20 @@ function escapeXml(s) {
   );
 }
 
-// ---------- static frontend ----------
+// ---------- frontend ----------
 
-app.use(express.static(join(__dirname, '..', 'public')));
+// Gate the operator dashboard behind login; public pages stay open.
+app.get(['/', '/index.html'], (req, res) => {
+  if (!req.user) return res.redirect('/login.html');
+  res.sendFile(join(publicDir, 'index.html'));
+});
+
+app.use(express.static(publicDir));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Valet ticket system running on http://localhost:${PORT}`);
   console.log(`  AI vision : ${aiEnabled ? 'Anthropic (live)' : 'mock (set ANTHROPIC_API_KEY)'}`);
   console.log(`  SMS       : ${smsEnabled ? 'Twilio (live)' : 'mock (set TWILIO_* vars)'}`);
+  console.log(`  Auth      : ${userCount()} account(s)${SIGNUP_CODE ? ', signup code required' : ''}`);
 });

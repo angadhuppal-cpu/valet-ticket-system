@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Your Valet Ticket</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <style>
+    .owner-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .owner-card { width: 100%; max-width: 420px; text-align: center; }
+    .event-title { color: var(--muted); font-size: 13px; letter-spacing: 0.3px; }
+    .big-num { font-size: 64px; font-weight: 800; color: var(--accent); line-height: 1; margin: 6px 0 2px; }
+    .num-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .car-line { font-size: 20px; font-weight: 700; margin-top: 14px; }
+    .plate-line { font-family: ui-monospace, Menlo, monospace; display: inline-block; margin-top: 8px; background: var(--card-2); border: 1px solid var(--line); padding: 4px 12px; border-radius: 8px; letter-spacing: 1px; }
+    .status-row { margin: 18px 0; }
+    .big-badge { font-size: 13px; font-weight: 700; padding: 8px 16px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.6px; display: inline-block; }
+    .req-btn { margin-top: 6px; }
+    .note { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+    .spinner { color: var(--muted); padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="owner-wrap">
+    <div class="card owner-card" id="card">
+      <div class="spinner" id="loading">Loading your ticket…</div>
+      <div id="content" style="display:none">
+        <div class="event-title" id="eventTitle"></div>
+        <div class="num-label">Ticket</div>
+        <div class="big-num" id="num">–</div>
+        <div class="car-line" id="car"></div>
+        <div id="plateWrap"><span class="plate-line" id="plate"></span></div>
+        <div class="status-row"><span class="big-badge" id="badge"></span></div>
+        <button id="requestBtn" class="primary-btn big req-btn">🚗 Request my car</button>
+        <div id="msg" class="inline-msg"></div>
+        <div class="note">Show this screen (or your ticket number) to the valet when you arrive.</div>
+      </div>
+      <div id="notfound" style="display:none">
+        <div class="big-num">🤔</div>
+        <p>We couldn't find this ticket. Please check with the valet stand.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const token = new URLSearchParams(location.search).get('t');
+
+    function render(t) {
+      $('#loading').style.display = 'none';
+      $('#content').style.display = '';
+      $('#eventTitle').textContent = t.event_name;
+      $('#num').textContent = t.ticket_number;
+      const car = [t.color, t.make_model].filter(Boolean).join(' ');
+      $('#car').textContent = car || 'Your vehicle';
+      if (t.plate) { $('#plate').textContent = t.plate; } else { $('#plateWrap').style.display = 'none'; }
+      const badge = $('#badge');
+      badge.textContent = t.status_label;
+      badge.className = 'big-badge badge ' + t.status;
+      const btn = $('#requestBtn');
+      if (t.status === 'delivered') {
+        btn.style.display = 'none';
+        $('#msg').className = 'inline-msg ok';
+        $('#msg').textContent = 'This car has been delivered. Safe travels! 👋';
+      } else if (t.status === 'requested' || t.status === 'ready') {
+        btn.textContent = t.status === 'ready' ? '✅ Your car is ready' : '⏳ We\'re bringing it up…';
+        btn.disabled = true;
+      } else {
+        btn.textContent = '🚗 Request my car';
+        btn.disabled = false;
+      }
+    }
+
+    async function load() {
+      if (!token) return showNotFound();
+      try {
+        const res = await fetch('/api/t/' + encodeURIComponent(token));
+        if (!res.ok) return showNotFound();
+        render(await res.json());
+      } catch { showNotFound(); }
+    }
+
+    function showNotFound() {
+      $('#loading').style.display = 'none';
+      $('#notfound').style.display = '';
+    }
+
+    $('#requestBtn').addEventListener('click', async () => {
+      const btn = $('#requestBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/t/' + encodeURIComponent(token) + '/request', { method: 'POST' });
+        const t = await res.json();
+        render(t);
+        $('#msg').className = 'inline-msg ok';
+        $('#msg').textContent = 'Requested! The valet is getting your car ready. 🎉';
+      } catch {
+        btn.disabled = false;
+        $('#msg').className = 'inline-msg err';
+        $('#msg').textContent = 'Could not send the request. Please try again.';
+      }
+    });
+
+    load();
+    // Keep the owner's status in sync (e.g. once the valet marks it ready).
+    setInterval(load, 10000);
+  </script>
+</body>
+</html>

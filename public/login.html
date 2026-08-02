@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Sign in · Valet Ticket System</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <style>
+    .auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .auth-card { width: 100%; max-width: 400px; }
+    .auth-head { text-align: center; margin-bottom: 18px; }
+    .auth-head .logo { font-size: 44px; }
+    .auth-head h1 { font-size: 20px; margin: 8px 0 2px; }
+    .auth-head p { color: var(--muted); font-size: 13px; margin: 0; }
+    .switch { text-align: center; font-size: 13px; color: var(--muted); margin-top: 14px; }
+    .switch a { color: var(--accent); cursor: pointer; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="card auth-card">
+      <div class="auth-head">
+        <div class="logo">🅿️</div>
+        <h1>Valet Ticket System</h1>
+        <p id="authSub">Sign in to your valet stand</p>
+      </div>
+
+      <label class="field"><span>Username</span>
+        <input id="username" type="text" autocomplete="username" autocapitalize="none" />
+      </label>
+      <label class="field" id="nameField" style="display:none"><span>Display name</span>
+        <input id="displayName" type="text" placeholder="e.g. Front Desk" />
+      </label>
+      <label class="field"><span>Password</span>
+        <input id="password" type="password" autocomplete="current-password" />
+      </label>
+      <label class="field" id="codeField" style="display:none"><span>Signup code</span>
+        <input id="code" type="text" placeholder="Provided by your admin" />
+      </label>
+
+      <button id="submitBtn" class="primary-btn big">Sign in</button>
+      <div id="authMsg" class="inline-msg"></div>
+
+      <div class="switch">
+        <span id="switchText">New here?</span>
+        <a id="switchLink">Create an account</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    let mode = 'login'; // 'login' | 'signup'
+    let status = { hasUsers: true, signupCodeRequired: false };
+
+    async function loadStatus() {
+      try {
+        const r = await fetch('/api/auth/status').then((x) => x.json());
+        status = r;
+        if (r.authenticated) return (location.href = '/');
+        // If there are no users yet, start in signup mode to bootstrap.
+        if (!r.hasUsers) setMode('signup');
+      } catch {}
+    }
+
+    function setMode(m) {
+      mode = m;
+      const signup = m === 'signup';
+      $('#authSub').textContent = signup
+        ? (status.hasUsers ? 'Create your account' : 'Create the first admin account')
+        : 'Sign in to your valet stand';
+      $('#submitBtn').textContent = signup ? 'Create account' : 'Sign in';
+      $('#nameField').style.display = signup ? '' : 'none';
+      $('#codeField').style.display = signup && status.signupCodeRequired ? '' : 'none';
+      $('#password').autocomplete = signup ? 'new-password' : 'current-password';
+      $('#switchText').textContent = signup ? 'Already have an account?' : 'New here?';
+      $('#switchLink').textContent = signup ? 'Sign in' : 'Create an account';
+      $('#authMsg').textContent = '';
+    }
+
+    $('#switchLink').addEventListener('click', () => setMode(mode === 'login' ? 'signup' : 'login'));
+
+    async function submit() {
+      const btn = $('#submitBtn');
+      const msg = $('#authMsg');
+      msg.className = 'inline-msg';
+      msg.textContent = '';
+      const body = {
+        username: $('#username').value.trim(),
+        password: $('#password').value,
+      };
+      if (mode === 'signup') {
+        body.displayName = $('#displayName').value.trim();
+        body.code = $('#code').value.trim();
+      }
+      if (!body.username || !body.password) {
+        msg.className = 'inline-msg err';
+        msg.textContent = 'Enter a username and password.';
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/auth/${mode === 'signup' ? 'signup' : 'login'}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Something went wrong');
+        location.href = '/';
+      } catch (err) {
+        msg.className = 'inline-msg err';
+        msg.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    $('#submitBtn').addEventListener('click', submit);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+    loadStatus();
+  </script>
+</body>
+</html>

@@ -14,6 +14,10 @@ async function api(path, opts = {}) {
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401) {
+    location.href = '/login.html';
+    throw new Error('Not authenticated');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -50,7 +54,15 @@ async function loadConfig() {
   const sms = $('#pillSms');
   sms.textContent = state.config.smsEnabled ? 'SMS · live' : 'SMS · demo';
   sms.className = 'pill ' + (state.config.smsEnabled ? 'live' : 'mock');
+  if (state.config.user) {
+    $('#userChip').textContent = '👤 ' + (state.config.user.display_name || state.config.user.username);
+  }
 }
+
+$('#logoutBtn').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  location.href = '/login.html';
+});
 
 // ---------- tabs ----------
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -213,6 +225,7 @@ function renderTickets() {
         </div>
         <div class="tactions">
           <button class="mini" data-act="notify" data-id="${t.id}">${t.notified ? 'Resend text' : 'Send ticket text'}</button>
+          <button class="mini" data-act="print" data-token="${t.public_token}">🖨️ Ticket / QR</button>
           <button class="mini" data-act="advance" data-id="${t.id}">${NEXT_LABEL[t.status]}</button>
           <button class="mini danger" data-act="delete" data-id="${t.id}">Remove</button>
         </div>
@@ -230,6 +243,10 @@ $('#ticketList').addEventListener('click', async (e) => {
   const id = btn.dataset.id;
   const act = btn.dataset.act;
   try {
+    if (act === 'print') {
+      window.open('/print.html?t=' + encodeURIComponent(btn.dataset.token), '_blank');
+      return;
+    }
     if (act === 'notify') {
       const r = await api(`/api/tickets/${id}/notify`, { method: 'POST' });
       toast(r.sms.delivered ? 'Text sent ✅' : 'Saved (demo SMS — no Twilio configured)', r.sms.delivered ? 'ok' : 'err');

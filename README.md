@@ -90,6 +90,20 @@ docker run -p 3000:3000 -v valet-data:/data \
 service and a 1 GB disk. Create a Blueprint from your repo and fill in the
 secret env vars in the dashboard.
 
+**Prebuilt image (GitHub Actions → GHCR):** every push builds and publishes a
+container image via `.github/workflows/docker-publish.yml`, so you can pull
+instead of building:
+
+```bash
+docker run -p 3000:3000 -v valet-data:/data \
+  ghcr.io/angadhuppal-cpu/valet-ticket-system:latest
+```
+
+Tags include `:latest` (default branch), a per-branch tag, `:sha-<commit>` for
+every commit, and semver tags (`:1.2.3`) for `v*` releases. The package is
+private by default — make it public in the repo's *Packages* settings, or
+`docker login ghcr.io` first, to pull it.
+
 Set **`PUBLIC_BASE_URL`** to your real HTTPS URL so the QR/share links resolve
 correctly, and point your Twilio number's inbound webhook at
 `https://YOUR_HOST/api/sms/inbound`.

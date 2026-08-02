@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Valet Ticket System</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🅿️</span>
+      <div>
+        <h1>Valet Ticket System</h1>
+        <div id="eventName" class="event-name">Loading…</div>
+      </div>
+    </div>
+    <div class="status-pills">
+      <span id="pillAi" class="pill">AI</span>
+      <span id="pillSms" class="pill">SMS</span>
+      <button id="newEventBtn" class="ghost-btn" title="Start a new event">New event</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Intake card -->
+    <section class="card intake">
+      <h2>New car</h2>
+
+      <label class="field">
+        <span>Owner phone number</span>
+        <input id="phone" type="tel" inputmode="tel" placeholder="(555) 123-4567" autocomplete="off" />
+      </label>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="photo">📷 Scan photos</button>
+        <button class="tab" data-tab="manual">⌨️ Type details</button>
+      </div>
+
+      <!-- Photo mode -->
+      <div class="tab-panel active" id="panel-photo">
+        <div class="photo-grid">
+          <label class="photo-slot" id="slot-front">
+            <input type="file" accept="image/*" capture="environment" data-slot="front" hidden />
+            <div class="photo-inner"><span class="photo-plus">+</span><span>Front</span></div>
+          </label>
+          <label class="photo-slot" id="slot-back">
+            <input type="file" accept="image/*" capture="environment" data-slot="back" hidden />
+            <div class="photo-inner"><span class="photo-plus">+</span><span>Back</span></div>
+          </label>
+        </div>
+        <button id="analyzeBtn" class="primary-btn" disabled>Analyze with AI</button>
+        <p id="analyzeHint" class="hint">Add at least one photo, then let the AI read the plate, model & color.</p>
+      </div>
+
+      <!-- Details (shared by both modes; auto-filled after analysis) -->
+      <div class="details-grid">
+        <label class="field">
+          <span>License plate</span>
+          <input id="plate" type="text" placeholder="ABC1234" autocapitalize="characters" />
+        </label>
+        <label class="field">
+          <span>Make & model</span>
+          <input id="make_model" type="text" placeholder="Toyota Camry" />
+        </label>
+        <label class="field">
+          <span>Color</span>
+          <input id="color" type="text" placeholder="Silver" />
+        </label>
+        <label class="field">
+          <span>Notes (optional)</span>
+          <input id="notes" type="text" placeholder="Dashboard, VIP…" />
+        </label>
+      </div>
+
+      <button id="createBtn" class="primary-btn big">Create ticket</button>
+      <div id="intakeMsg" class="inline-msg"></div>
+    </section>
+
+    <!-- Tickets -->
+    <section class="card tickets">
+      <div class="tickets-head">
+        <h2>Tickets <span id="ticketCount" class="count">0</span></h2>
+        <button id="notifyAllBtn" class="secondary-btn">Text everyone their ticket</button>
+      </div>
+      <div class="filters" id="filters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="requested">🔔 Requested</button>
+        <button class="chip" data-filter="parked">Parked</button>
+        <button class="chip" data-filter="ready">Ready</button>
+        <button class="chip" data-filter="delivered">Delivered</button>
+      </div>
+      <div id="ticketList" class="ticket-list"></div>
+      <div id="emptyState" class="empty">No cars yet. Add your first car above. 🚗</div>
+    </section>
+  </main>
+
+  <!-- Reply simulator (mock SMS mode) -->
+  <div id="simModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Simulate owner text-back</h3>
+      <p class="hint">In live mode owners reply to your Twilio number. Here you can simulate that reply to test the early-pickup flow.</p>
+      <label class="field"><span>From (phone)</span><input id="simFrom" type="tel" /></label>
+      <label class="field"><span>Message</span><input id="simBody" type="text" placeholder="e.g. Ready for ticket 3" /></label>
+      <div class="modal-actions">
+        <button id="simCancel" class="ghost-btn">Cancel</button>
+        <button id="simSend" class="primary-btn">Send reply</button>
+      </div>
+      <div id="simResult" class="inline-msg"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

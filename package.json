@@ -1,0 +1,17 @@
+{
+  "name": "valet-ticket-system",
+  "version": "1.0.0",
+  "description": "A hassle-free valet ticketing system with AI photo recognition and SMS notifications.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

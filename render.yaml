@@ -1,17 +1,27 @@
 # One-click deploy on Render (https://render.com). Push this repo, then
-# "New +" -> "Blueprint" and point it at your fork. Fill in the AI/SMS
+# "New +" -> "Blueprint" and point it at your repo. Fill in the AI/SMS
 # values in the dashboard (they are marked sync:false so they aren't
 # committed to git).
+#
+# This blueprint uses the FREE plan. Note: free web services have no
+# persistent disk, so the SQLite database (tickets + accounts) resets
+# whenever Render restarts or redeploys the app, and the service spins
+# down after ~15 min idle (a cold start takes ~50s on the next visit).
+#
+# ---> To keep your data for real use, upgrade to a persistent disk:
+#      1. change `plan: free` to `plan: starter`  (~$7/month)
+#      2. uncomment the `disk:` block at the bottom
+#      That mounts /data on durable storage so nothing is lost on restart.
 services:
   - type: web
     name: valet-ticket-system
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free
     healthCheckPath: /login.html
     envVars:
       - key: DB_PATH
-        value: /data/valet.db
+        value: /data/valet.db # writable, but ephemeral on the free plan
       - key: PUBLIC_BASE_URL
         sync: false # e.g. https://your-app.onrender.com (used for QR links)
       - key: SIGNUP_CODE
@@ -26,7 +36,8 @@ services:
         sync: false
       - key: TWILIO_FROM_NUMBER
         sync: false
-    disk:
-      name: valet-data
-      mountPath: /data
-      sizeGB: 1
+    # Uncomment together with `plan: starter` above to persist data:
+    # disk:
+    #   name: valet-data
+    #   mountPath: /data
+    #   sizeGB: 1

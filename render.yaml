@@ -26,10 +26,10 @@ services:
         sync: false # e.g. https://your-app.onrender.com (used for QR links)
       - key: SIGNUP_CODE
         sync: false # optional: require this code to create extra accounts
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: ANTHROPIC_MODEL
-        value: claude-sonnet-5
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN

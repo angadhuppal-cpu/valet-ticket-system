@@ -1,23 +1,41 @@
 // AI vision service: extracts license plate, make/model, and color from
-// photos of the front and back of a car using Anthropic's Claude vision API.
+// photos of the front and back of a car using Google's Gemini Flash model.
 //
-// If ANTHROPIC_API_KEY is not set, it falls back to a deterministic mock so the
+// Uses the Gemini API (generativelanguage.googleapis.com) with an API key.
+// If GEMINI_API_KEY is not set, it falls back to a deterministic mock so the
 // app remains fully usable for demos and local testing without any credentials.
+//
+// GCP-native note: the same model is available on Vertex AI
+// (…-aiplatform.googleapis.com/…:generateContent) using service-account/ADC
+// auth instead of an API key — swap BASE_URL + the auth header for production.
 
-const API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
+const API_KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const BASE_URL =
+  process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 
 const SYSTEM_PROMPT = `You are a vehicle-identification assistant for a valet stand.
 You are given one or two photos of a single car (typically the front and the back).
-Identify the vehicle and return ONLY a compact JSON object, no prose, with keys:
+Identify the vehicle and return ONLY a compact JSON object with keys:
   "plate"      : the license plate characters (uppercase, no spaces/dashes), or "" if not legible
   "make_model" : the make and model, e.g. "Toyota Camry", or "" if unsure
   "color"      : the primary exterior color as a simple word, e.g. "Silver"
-  "confidence" : a number 0-1 for how confident you are overall
-Return valid JSON only.`;
+  "confidence" : a number 0-1 for how confident you are overall`;
+
+// Structured-output schema so Gemini returns exactly the shape we need.
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    plate: { type: 'string' },
+    make_model: { type: 'string' },
+    color: { type: 'string' },
+    confidence: { type: 'number' },
+  },
+};
 
 function parseJsonLoose(text) {
-  // Models sometimes wrap JSON in fences or prose; extract the first object.
+  // With responseMimeType application/json the text is clean JSON, but stay
+  // defensive in case a model wraps it in prose or fences.
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON found in model response');
   return JSON.parse(match[0]);
@@ -33,36 +51,43 @@ export async function analyzeCarPhotos(photos) {
     return mockAnalysis();
   }
 
-  const content = [
-    { type: 'text', text: 'Identify this vehicle from the photo(s).' },
+  const parts = [
+    { text: 'Identify this vehicle from the photo(s).' },
     ...photos.map((p) => ({
-      type: 'image',
-      source: { type: 'base64', media_type: p.media_type, data: p.data },
+      inline_data: { mime_type: p.media_type, data: p.data },
     })),
   ];
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch(`${BASE_URL}/models/${MODEL}:generateContent`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
+      'x-goog-api-key': API_KEY,
     },
     body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 300,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content }],
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 300,
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+      },
     }),
   });
 
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new Error(`Anthropic API error ${res.status}: ${detail.slice(0, 300)}`);
+    throw new Error(`Gemini API error ${res.status}: ${detail.slice(0, 300)}`);
   }
 
   const data = await res.json();
-  const text = (data.content || []).map((b) => b.text || '').join('\n');
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    const reason = data.promptFeedback?.blockReason || 'no candidates returned';
+    throw new Error(`Gemini returned no result (${reason})`);
+  }
+  const text = (candidate.content?.parts || []).map((p) => p.text || '').join('\n');
   const parsed = parseJsonLoose(text);
 
   return {

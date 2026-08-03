@@ -64,7 +64,7 @@ Copy `.env.example` to `.env` and fill in credentials:
 
 | Feature | Variable(s) | Notes |
 |---|---|---|
-| AI recognition | `ANTHROPIC_API_KEY` | Uses Claude vision to read plate/model/color from photos. |
+| AI recognition | `GEMINI_API_KEY` | Uses Google Gemini Flash vision to read plate/model/color from photos. |
 | SMS | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Sends real texts. |
 | Inbound texts | Twilio number webhook | Point the number's inbound message webhook (POST) at `/api/sms/inbound`. |
 
@@ -81,7 +81,7 @@ The app is a single container with a persistent SQLite volume.
 docker build -t valet .
 docker run -p 3000:3000 -v valet-data:/data \
   -e PUBLIC_BASE_URL=https://valet.example.com \
-  -e ANTHROPIC_API_KEY=... \
+  -e GEMINI_API_KEY=... \
   -e TWILIO_ACCOUNT_SID=... -e TWILIO_AUTH_TOKEN=... -e TWILIO_FROM_NUMBER=+1... \
   valet
 ```
@@ -114,7 +114,7 @@ correctly, and point your Twilio number's inbound webhook at
   (no native build step).
 - **Frontend:** dependency-free HTML/CSS/JS, mobile-first, works great on a phone
   or tablet at the valet stand.
-- **AI:** Anthropic Claude vision API. **SMS:** Twilio REST API. Both degrade
+- **AI:** Google Gemini Flash vision API. **SMS:** Twilio REST API. Both degrade
   gracefully to demo mode when unconfigured.
 
 ## API overview

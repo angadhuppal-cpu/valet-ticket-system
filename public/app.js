@@ -1,7 +1,7 @@
 // Valet Ticket System — dashboard logic
 const $ = (sel) => document.querySelector(sel);
 const state = {
-  config: { aiEnabled: false, smsEnabled: false, event: { name: '' } },
+  config: { aiEnabled: false, event: { name: '' } },
   tickets: [],
   filter: 'all',
   photos: { front: null, back: null }, // { media_type, data, dataUrl }
@@ -51,9 +51,6 @@ async function loadConfig() {
   const ai = $('#pillAi');
   ai.textContent = state.config.aiEnabled ? 'AI · live' : 'AI · demo';
   ai.className = 'pill ' + (state.config.aiEnabled ? 'live' : 'mock');
-  const sms = $('#pillSms');
-  sms.textContent = state.config.smsEnabled ? 'SMS · live' : 'SMS · demo';
-  sms.className = 'pill ' + (state.config.smsEnabled ? 'live' : 'mock');
   if (state.config.user) {
     $('#userChip').textContent = '👤 ' + (state.config.user.display_name || state.config.user.username);
   }
@@ -221,10 +218,8 @@ function renderTickets() {
           ${t.plate ? `<span class="plate">${escapeHtml(t.plate)}</span>` : ''}
           <span>📱 ${escapeHtml(t.phone)}</span>
           ${t.notes ? `<span>📝 ${escapeHtml(t.notes)}</span>` : ''}
-          <span class="notif-dot">${t.notified ? '✅ texted' : '• not texted'}</span>
         </div>
         <div class="tactions">
-          <button class="mini" data-act="notify" data-id="${t.id}">${t.notified ? 'Resend text' : 'Send ticket text'}</button>
           <button class="mini" data-act="print" data-token="${t.public_token}">🖨️ Ticket / QR</button>
           <button class="mini" data-act="advance" data-id="${t.id}">${NEXT_LABEL[t.status]}</button>
           <button class="mini danger" data-act="delete" data-id="${t.id}">Remove</button>
@@ -247,11 +242,7 @@ $('#ticketList').addEventListener('click', async (e) => {
       window.open('/print.html?t=' + encodeURIComponent(btn.dataset.token), '_blank');
       return;
     }
-    if (act === 'notify') {
-      const r = await api(`/api/tickets/${id}/notify`, { method: 'POST' });
-      toast(r.sms.delivered ? 'Text sent ✅' : 'Saved (demo SMS — no Twilio configured)', r.sms.delivered ? 'ok' : 'err');
-      await loadTickets();
-    } else if (act === 'advance') {
+    if (act === 'advance') {
       const ticket = state.tickets.find((t) => String(t.id) === String(id));
       const next = NEXT_STATUS[ticket.status];
       await api(`/api/tickets/${id}`, { method: 'PATCH', body: { status: next } });
@@ -276,23 +267,6 @@ document.querySelectorAll('.chip').forEach((chip) => {
   });
 });
 
-// Notify all
-$('#notifyAllBtn').addEventListener('click', async () => {
-  if (state.tickets.length === 0) return toast('No tickets to text yet', 'err');
-  const unnotified = state.tickets.filter((t) => !t.notified).length;
-  const all = unnotified === 0;
-  if (!confirm(all ? 'Resend the ticket text to ALL owners?' : `Text ${unnotified} owner(s) their ticket details?`))
-    return;
-  try {
-    const r = await api(`/api/tickets/notify-all${all ? '?all=1' : ''}`, { method: 'POST' });
-    const delivered = r.results.filter((x) => x.sms.delivered).length;
-    toast(state.config.smsEnabled ? `Texted ${delivered}/${r.sent} owners` : `Queued ${r.sent} (demo SMS mode)`);
-    await loadTickets();
-  } catch (err) {
-    toast(err.message, 'err');
-  }
-});
-
 // New event
 $('#newEventBtn').addEventListener('click', async () => {
   const name = prompt('Name this valet event:', state.config.event.name || 'Valet Event');
@@ -307,56 +281,15 @@ $('#newEventBtn').addEventListener('click', async () => {
   }
 });
 
-// ---------- reply simulator (demo SMS mode) ----------
-$('#newEventBtn').insertAdjacentHTML('afterend', '');
-function openSim() {
-  $('#simFrom').value = '';
-  $('#simBody').value = '';
-  $('#simResult').textContent = '';
-  $('#simModal').classList.remove('hidden');
-}
-$('#simCancel').addEventListener('click', () => $('#simModal').classList.add('hidden'));
-$('#simSend').addEventListener('click', async () => {
-  try {
-    const r = await api('/api/sms/simulate-inbound', {
-      method: 'POST',
-      body: { from: $('#simFrom').value.trim(), body: $('#simBody').value.trim() },
-    });
-    const el = $('#simResult');
-    if (r.matchedTicket) {
-      el.className = 'inline-msg ok';
-      el.textContent = `Matched ticket #${r.matchedTicket.ticket_number} → marked "requested". Auto-reply: ${r.reply}`;
-      await loadTickets();
-    } else {
-      el.className = 'inline-msg err';
-      el.textContent = r.reply;
-    }
-  } catch (err) {
-    $('#simResult').className = 'inline-msg err';
-    $('#simResult').textContent = err.message;
-  }
-});
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
-// Poll for inbound requests so the board updates when owners text back.
-setInterval(() => loadTickets().catch(() => {}), 8000);
 
 // ---------- init ----------
 (async function init() {
   try {
     await loadConfig();
     await loadTickets();
-    // Add a "Simulate reply" button when SMS is in demo mode.
-    if (!state.config.smsEnabled) {
-      const btn = document.createElement('button');
-      btn.className = 'ghost-btn';
-      btn.textContent = '💬 Simulate reply';
-      btn.addEventListener('click', openSim);
-      $('.status-pills').insertBefore(btn, $('#newEventBtn'));
-    }
   } catch (err) {
     toast('Could not load: ' + err.message, 'err');
   }

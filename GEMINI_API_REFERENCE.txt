@@ -1,0 +1,27 @@
+Gemini API Configuration Reference
+==================================
+
+Current Configuration:
+- Model: gemini-flash-latest
+- API Key: Set in .env as GEMINI_API_KEY
+- Base URL: https://generativelanguage.googleapis.com/v1beta
+
+Full Endpoint URL:
+https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
+
+Working Model Names (tested):
+- gemini-flash-latest (currently using - auto-updates to latest flash model)
+- gemini-1.5-flash-latest (version-specific latest)
+- gemini-1.5-flash (stable)
+
+Non-working Models:
+- gemini-2.0-flash-exp (404 error - not available)
+- gemini-3.0-flash (404 error - doesn't exist yet)
+
+API Documentation:
+https://ai.google.dev/api/rest
+
+Notes:
+- Using v1beta endpoint supports all stable models
+- gemini-flash-latest automatically points to the newest flash model
+- No version number needed, making it future-proof

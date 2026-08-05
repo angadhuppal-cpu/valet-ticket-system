@@ -10,13 +10,17 @@
 // auth instead of an API key — swap BASE_URL + the auth header for production.
 
 const API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const BASE_URL =
   process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 
 const SYSTEM_PROMPT = `You are a vehicle-identification assistant for a valet stand.
 You are given one or two photos of a single car (typically the front and the back).
-Identify the vehicle and return ONLY a compact JSON object with keys:
+Identify the vehicle and return ONLY a JSON object, nothing else. No explanations, no additional text.
+Return exactly this format:
+{"plate":"ABC1234","make_model":"Toyota Camry","color":"Silver","confidence":0.95}
+
+Keys:
   "plate"      : the license plate characters (uppercase, no spaces/dashes), or "" if not legible
   "make_model" : the make and model, e.g. "Toyota Camry", or "" if unsure
   "color"      : the primary exterior color as a simple word, e.g. "Silver"
@@ -34,9 +38,11 @@ const RESPONSE_SCHEMA = {
 };
 
 function parseJsonLoose(text) {
-  // With responseMimeType application/json the text is clean JSON, but stay
-  // defensive in case a model wraps it in prose or fences.
-  const match = text.match(/\{[\s\S]*\}/);
+  // Remove markdown code fences if present
+  let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+
+  // Extract JSON object
+  const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON found in model response');
   return JSON.parse(match[0]);
 }
@@ -69,9 +75,7 @@ export async function analyzeCarPhotos(photos) {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 300,
-        responseMimeType: 'application/json',
-        responseSchema: RESPONSE_SCHEMA,
+        maxOutputTokens: 2000,
       },
     }),
   });
@@ -82,12 +86,15 @@ export async function analyzeCarPhotos(photos) {
   }
 
   const data = await res.json();
+  console.log('Full Gemini response:', JSON.stringify(data, null, 2));
   const candidate = data.candidates?.[0];
   if (!candidate) {
     const reason = data.promptFeedback?.blockReason || 'no candidates returned';
     throw new Error(`Gemini returned no result (${reason})`);
   }
   const text = (candidate.content?.parts || []).map((p) => p.text || '').join('\n');
+  console.log('Gemini raw response text:', text);
+  console.log('Text length:', text.length);
   const parsed = parseJsonLoose(text);
 
   return {

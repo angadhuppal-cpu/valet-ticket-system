@@ -19,7 +19,6 @@
     </div>
     <div class="status-pills">
       <span id="pillAi" class="pill">AI</span>
-      <span id="pillSms" class="pill">SMS</span>
       <button id="newEventBtn" class="ghost-btn" title="Start a new event">New event</button>
       <span id="userChip" class="pill" title="Signed in"></span>
       <button id="logoutBtn" class="ghost-btn" title="Sign out">Sign out</button>
@@ -85,7 +84,6 @@
     <section class="card tickets">
       <div class="tickets-head">
         <h2>Tickets <span id="ticketCount" class="count">0</span></h2>
-        <button id="notifyAllBtn" class="secondary-btn">Text everyone their ticket</button>
       </div>
       <div class="filters" id="filters">
         <button class="chip active" data-filter="all">All</button>
@@ -98,21 +96,6 @@
       <div id="emptyState" class="empty">No cars yet. Add your first car above. 🚗</div>
     </section>
   </main>
-
-  <!-- Reply simulator (mock SMS mode) -->
-  <div id="simModal" class="modal hidden">
-    <div class="modal-card">
-      <h3>Simulate owner text-back</h3>
-      <p class="hint">In live mode owners reply to your Twilio number. Here you can simulate that reply to test the early-pickup flow.</p>
-      <label class="field"><span>From (phone)</span><input id="simFrom" type="tel" /></label>
-      <label class="field"><span>Message</span><input id="simBody" type="text" placeholder="e.g. Ready for ticket 3" /></label>
-      <div class="modal-actions">
-        <button id="simCancel" class="ghost-btn">Cancel</button>
-        <button id="simSend" class="primary-btn">Send reply</button>
-      </div>
-      <div id="simResult" class="inline-msg"></div>
-    </div>
-  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script src="app.js"></script>

@@ -24,9 +24,8 @@
     .stub .tnum { font-size: 76px; font-weight: 900; line-height: 1; margin: 2px 0 8px; }
     .stub .car { font-size: 18px; font-weight: 700; }
     .stub .plate { display: inline-block; font-family: ui-monospace, Menlo, monospace; letter-spacing: 2px; border: 1px solid #0b1220; border-radius: 6px; padding: 3px 10px; margin-top: 8px; }
-    .qr { width: 190px; height: 190px; margin: 14px auto 6px; }
-    .qr svg { width: 100%; height: 100%; }
-    .scan-note { font-size: 12.5px; color: #4a5878; }
+    .stub .phone { font-size: 14px; color: #4a5878; margin-top: 8px; }
+    .car-photo { width: 100%; max-width: 280px; height: auto; margin: 12px auto; border-radius: 8px; border: 1px solid #c7cede; }
 
     @media print {
       .toolbar { display: none; }
@@ -40,6 +39,7 @@
 <body>
   <div class="toolbar">
     <button class="primary" onclick="window.print()">🖨️ Print ticket</button>
+    <button onclick="shareTicket()">📤 Share</button>
     <button onclick="window.close()">Close</button>
   </div>
 
@@ -51,30 +51,81 @@
     <div class="tnum" id="num">–</div>
     <div class="car" id="car"></div>
     <div id="plateWrap"><span class="plate" id="plate"></span></div>
+    <div class="phone" id="phone"></div>
     <hr class="divider" />
-    <div class="qr" id="qr"></div>
-    <div class="scan-note">Scan to check status &amp; request your car</div>
+    <img id="carPhoto" class="car-photo" style="display:none" />
   </div>
   <div id="err" style="display:none">Ticket not found.</div>
 
   <script>
     const token = new URLSearchParams(location.search).get('t');
+    let shareUrl = '';
+    let ticketNumber = '';
+
     async function load() {
       if (!token) return fail();
       try {
         const res = await fetch('/api/t/' + encodeURIComponent(token));
         if (!res.ok) return fail();
         const t = await res.json();
+        shareUrl = t.share_url;
+        ticketNumber = t.ticket_number;
         document.getElementById('event').textContent = t.event_name;
         document.getElementById('num').textContent = t.ticket_number;
         const car = [t.color, t.make_model].filter(Boolean).join(' ');
         document.getElementById('car').textContent = car || 'Vehicle';
         if (t.plate) document.getElementById('plate').textContent = t.plate;
         else document.getElementById('plateWrap').style.display = 'none';
-        document.getElementById('qr').innerHTML = t.qr_svg;
+        if (t.phone) document.getElementById('phone').textContent = '📱 ' + t.phone;
+        if (t.front_photo) {
+          const img = document.getElementById('carPhoto');
+          img.src = t.front_photo;
+          img.style.display = 'block';
+        }
         document.getElementById('stub').style.display = '';
       } catch { fail(); }
     }
+
+    async function shareTicket() {
+      if (!shareUrl) return alert('Ticket link not available');
+
+      // Try using Web Share API if available (mobile devices)
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: `Valet Ticket #${ticketNumber}`,
+            text: `Your valet parking ticket #${ticketNumber}`,
+            url: shareUrl
+          });
+        } catch (err) {
+          // User cancelled share or error occurred
+          if (err.name !== 'AbortError') {
+            copyToClipboard();
+          }
+        }
+      } else {
+        // Fallback: copy to clipboard
+        copyToClipboard();
+      }
+    }
+
+    function copyToClipboard() {
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        alert('Ticket link copied to clipboard!');
+      }).catch(() => {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = shareUrl;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Ticket link copied to clipboard!');
+      });
+    }
+
     function fail() { document.getElementById('err').style.display = ''; }
     load();
   </script>

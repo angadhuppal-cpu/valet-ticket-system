@@ -71,6 +71,7 @@ function ensureColumn(table, column, definition) {
   }
 }
 ensureColumn('tickets', 'public_token', 'TEXT');
+ensureColumn('tickets', 'front_photo', 'TEXT'); // base64 image data
 
 export function newToken(bytes = 18) {
   return randomBytes(bytes).toString('base64url');

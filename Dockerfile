@@ -11,12 +11,12 @@ RUN npm ci --omit=dev || npm install --omit=dev
 COPY src ./src
 COPY public ./public
 
-# Persisted SQLite database lives here (mount a volume to keep data).
-ENV DB_PATH=/data/valet.db
-VOLUME ["/data"]
-
+# Cloud Run will provide DATABASE_URL and PORT via environment variables
 ENV NODE_ENV=production
-ENV PORT=3000
-EXPOSE 3000
+EXPOSE 8080
+
+# Health check for Cloud Run
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8080/api/auth/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 CMD ["node", "src/server.js"]

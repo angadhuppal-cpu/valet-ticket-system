@@ -26,6 +26,22 @@ app.set('trust proxy', true);
 app.use(express.json({ limit: '25mb' }));
 app.use(attachUser);
 
+// ---------- Server-Sent Events for real-time updates ----------
+
+// Track connected clients for broadcasting updates
+const sseClients = new Set();
+
+function broadcastUpdate(eventType, data) {
+  const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  sseClients.forEach((client) => {
+    try {
+      client.write(message);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  });
+}
+
 // ---------- helpers ----------
 
 function normalizePhone(raw) {
@@ -140,12 +156,34 @@ app.use('/api', (req, res, next) => {
 
 // ---------- config / status ----------
 
-app.get('/api/config', (req, res) => {
-  const event = getActiveEvent();
+app.get('/api/config', async (req, res) => {
+  const event = await getActiveEvent();
   res.json({
     aiEnabled,
     user: req.user,
     event: { id: event.id, name: event.name },
+  });
+});
+
+// ---------- SSE endpoint for real-time updates ----------
+
+app.get('/api/updates', (req, res) => {
+  // Set up SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  // Add this client to the set
+  sseClients.add(res);
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+
+  // Remove client when connection closes
+  req.on('close', () => {
+    sseClients.delete(res);
   });
 });
 
@@ -176,20 +214,20 @@ app.post('/api/analyze', async (req, res) => {
 
 // ---------- tickets ----------
 
-app.get('/api/tickets', (req, res) => {
-  const event = getActiveEvent();
+app.get('/api/tickets', async (req, res) => {
+  const event = await getActiveEvent();
   const tickets = db
     .prepare('SELECT * FROM tickets WHERE event_id = ? ORDER BY ticket_number DESC')
     .all(event.id);
   res.json({ event: { id: event.id, name: event.name }, tickets });
 });
 
-app.post('/api/tickets', (req, res) => {
-  const event = getActiveEvent();
+app.post('/api/tickets', async (req, res) => {
+  const event = await getActiveEvent();
   const phone = normalizePhone(req.body?.phone);
   if (!phone) return res.status(400).json({ error: 'A valid phone number is required.' });
 
-  const number = nextTicketNumber(event.id);
+  const number = await nextTicketNumber(event.id);
   const info = db
     .prepare(
       `INSERT INTO tickets (event_id, ticket_number, phone, plate, make_model, color, notes, public_token, front_photo)
@@ -206,7 +244,12 @@ app.post('/api/tickets', (req, res) => {
       newToken(),
       req.body?.front_photo || null  // Save front photo as base64
     );
-  res.status(201).json(getTicket(info.lastInsertRowid));
+  const newTicket = getTicket(info.lastInsertRowid);
+
+  // Broadcast update to all connected clients
+  broadcastUpdate('ticket_created', { ticket: newTicket });
+
+  res.status(201).json(newTicket);
 });
 
 app.patch('/api/tickets/:id', (req, res) => {
@@ -231,7 +274,12 @@ app.patch('/api/tickets/:id', (req, res) => {
   updates.push("updated_at = datetime('now')");
   values.push(ticket.id);
   db.prepare(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-  res.json(getTicket(ticket.id));
+  const updatedTicket = getTicket(ticket.id);
+
+  // Broadcast update to all connected clients
+  broadcastUpdate('ticket_updated', { ticket: updatedTicket });
+
+  res.json(updatedTicket);
 });
 
 app.delete('/api/tickets/:id', (req, res) => {
@@ -240,6 +288,10 @@ app.delete('/api/tickets/:id', (req, res) => {
   // Delete associated messages first to avoid foreign key constraint error
   db.prepare('DELETE FROM messages WHERE ticket_id = ?').run(ticket.id);
   db.prepare('DELETE FROM tickets WHERE id = ?').run(ticket.id);
+
+  // Broadcast update to all connected clients
+  broadcastUpdate('ticket_deleted', { id: ticket.id });
+
   res.json({ ok: true });
 });
 

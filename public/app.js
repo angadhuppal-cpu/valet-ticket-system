@@ -285,11 +285,36 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ---------- Real-time updates via Server-Sent Events ----------
+function connectToUpdates() {
+  const eventSource = new EventSource('/api/updates');
+
+  eventSource.addEventListener('ticket_created', () => {
+    loadTickets();
+  });
+
+  eventSource.addEventListener('ticket_updated', () => {
+    loadTickets();
+  });
+
+  eventSource.addEventListener('ticket_deleted', () => {
+    loadTickets();
+  });
+
+  eventSource.addEventListener('error', (err) => {
+    console.error('SSE connection error:', err);
+    // Automatically reconnects after a delay
+    eventSource.close();
+    setTimeout(() => connectToUpdates(), 5000);
+  });
+}
+
 // ---------- init ----------
 (async function init() {
   try {
     await loadConfig();
     await loadTickets();
+    connectToUpdates(); // Start listening for real-time updates
   } catch (err) {
     toast('Could not load: ' + err.message, 'err');
   }

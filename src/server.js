@@ -201,11 +201,29 @@ app.get('/api/updates', (req, res) => {
 
 // ---------- events ----------
 
-app.post('/api/events', (req, res) => {
+app.post('/api/events', async (req, res) => {
   const name = (req.body?.name || '').trim() || 'Valet Event';
-  db.prepare('UPDATE events SET active = 0 WHERE active = 1').run();
-  const info = db.prepare('INSERT INTO events (name, active) VALUES (?, 1)').run(name);
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(info.lastInsertRowid);
+  const { USE_POSTGRES } = await import('./db.js');
+  const activeVal = USE_POSTGRES ? true : 1;
+  const inactiveVal = USE_POSTGRES ? false : 0;
+
+  const updateStmt = db.prepare('UPDATE events SET active = ? WHERE active = ?');
+  if (USE_POSTGRES) {
+    await updateStmt.run(inactiveVal, activeVal);
+  } else {
+    updateStmt.run(inactiveVal, activeVal);
+  }
+
+  const insertStmt = db.prepare('INSERT INTO events (name, active) VALUES (?, ?)');
+  const info = USE_POSTGRES
+    ? await insertStmt.run(name, activeVal)
+    : insertStmt.run(name, activeVal);
+
+  const selectStmt = db.prepare('SELECT * FROM events WHERE id = ?');
+  const event = USE_POSTGRES
+    ? await selectStmt.get(info.lastInsertRowid)
+    : selectStmt.get(info.lastInsertRowid);
+
   res.status(201).json(event);
 });
 

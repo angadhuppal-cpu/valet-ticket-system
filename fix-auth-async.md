@@ -1,29 +1,29 @@
-// Authentication: password hashing (scrypt) and cookie-based sessions.
-// No external dependencies — everything comes from node:crypto.
-import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
+# PostgreSQL Async Fix
+
+## Problem
+The auth functions in `src/auth.js` are synchronous, but when using PostgreSQL (DATABASE_URL is set), all database operations return Promises. This causes `userCount()` to return `undefined`, breaking signup.
+
+## Required Changes
+
+### 1. Update `src/db.js`
+Export the `USE_POSTGRES` flag:
+
+```javascript
+// Line 5 - already exists
+const USE_POSTGRES = Boolean(process.env.DATABASE_URL);
+
+// Add after line 182 (after export { db };)
+export { db, USE_POSTGRES };
+```
+
+### 2. Update `src/auth.js`
+Import USE_POSTGRES and make functions async:
+
+```javascript
+// Line 4 - update import
 import { db, newToken, USE_POSTGRES } from './db.js';
 
-const SESSION_DAYS = 30;
-const COOKIE = 'sid';
-// If set, self-signup requires this code (recommended for public deploys).
-export const SIGNUP_CODE = process.env.SIGNUP_CODE || '';
-
-// ---------- passwords ----------
-export function hashPassword(password) {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password, stored) {
-  const [salt, hash] = String(stored).split(':');
-  if (!salt || !hash) return false;
-  const candidate = scryptSync(password, salt, 64);
-  const expected = Buffer.from(hash, 'hex');
-  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
-}
-
-// ---------- users ----------
+// Line 27-37 - make createUser async
 export async function createUser({ username, password, displayName }) {
   const uname = String(username || '').trim().toLowerCase();
   if (uname.length < 3) throw new Error('Username must be at least 3 characters.');
@@ -39,6 +39,7 @@ export async function createUser({ username, password, displayName }) {
   return USE_POSTGRES ? await stmt3.get(info.lastInsertRowid) : stmt3.get(info.lastInsertRowid);
 }
 
+// Line 39-44 - make authenticate async
 export async function authenticate(username, password) {
   const uname = String(username || '').trim().toLowerCase();
   const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
@@ -47,13 +48,14 @@ export async function authenticate(username, password) {
   return { id: user.id, username: user.username, display_name: user.display_name };
 }
 
+// Line 46-48 - make userCount async
 export async function userCount() {
   const stmt = db.prepare('SELECT COUNT(*) AS n FROM users');
   const result = USE_POSTGRES ? await stmt.get() : stmt.get();
   return result.n;
 }
 
-// ---------- sessions ----------
+// Line 51-59 - make createSession async
 export async function createSession(userId) {
   const token = newToken(24);
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5).toISOString();
@@ -66,6 +68,7 @@ export async function createSession(userId) {
   return token;
 }
 
+// Line 62-64 - make destroySession async
 export async function destroySession(token) {
   if (!token) return;
   const stmt = db.prepare('DELETE FROM sessions WHERE token = ?');
@@ -76,6 +79,7 @@ export async function destroySession(token) {
   }
 }
 
+// Line 66-81 - make sessionUser async
 async function sessionUser(token) {
   if (!token) return null;
   const stmt = db.prepare(
@@ -92,46 +96,73 @@ async function sessionUser(token) {
   return { id: row.id, username: row.username, display_name: row.display_name };
 }
 
-// ---------- cookies ----------
-export function parseCookies(req) {
-  const out = {};
-  const header = req.headers.cookie;
-  if (!header) return out;
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
-  }
-  return out;
-}
-
-export function setSessionCookie(res, token, req) {
-  const secure = req.headers['x-forwarded-proto'] === 'https' || req.secure;
-  const attrs = [
-    `${COOKIE}=${token}`,
-    'HttpOnly',
-    'Path=/',
-    'SameSite=Lax',
-    `Max-Age=${SESSION_DAYS * 86400}`,
-  ];
-  if (secure) attrs.push('Secure');
-  res.append('Set-Cookie', attrs.join('; '));
-}
-
-export function clearSessionCookie(res) {
-  res.append('Set-Cookie', `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
-}
-
-// Attach req.user (or null) from the session cookie.
+// Line 114-119 - make attachUser async
 export async function attachUser(req, _res, next) {
   const cookies = parseCookies(req);
   req.sessionToken = cookies[COOKIE] || null;
   req.user = await sessionUser(req.sessionToken);
   next();
 }
+```
 
-// Guard: require an authenticated user for the wrapped route.
-export function requireAuth(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-  next();
-}
+### 3. Update `src/server.js`
+Make routes async where they call auth functions:
+
+```javascript
+// Line 79-86 - make async
+app.get('/api/auth/status', async (req, res) => {
+  const count = await userCount();
+  res.json({
+    authenticated: Boolean(req.user),
+    user: req.user || null,
+    hasUsers: count > 0,
+    signupCodeRequired: Boolean(SIGNUP_CODE) && count > 0,
+  });
+});
+
+// Line 88-102 - make async
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { username, password, displayName, code } = req.body || {};
+    const count = await userCount();
+    if (SIGNUP_CODE && count > 0 && code !== SIGNUP_CODE) {
+      return res.status(403).json({ error: 'Invalid or missing signup code.' });
+    }
+    const user = await createUser({ username, password, displayName });
+    const token = await createSession(user.id);
+    setSessionCookie(res, token, req);
+    res.status(201).json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Line 104-111 - make async
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  const user = await authenticate(username, password);
+  if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
+  const token = await createSession(user.id);
+  setSessionCookie(res, token, req);
+  res.json({ user });
+});
+
+// Line 113-117 - make async
+app.post('/api/auth/logout', async (req, res) => {
+  await destroySession(req.sessionToken);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+```
+
+## Deploy Instructions
+
+After making these changes locally:
+
+```bash
+# Test locally first
+npm start
+
+# Deploy to Cloud Run
+gcloud run deploy valet-ticket-system --source . --region=us-central1
+```

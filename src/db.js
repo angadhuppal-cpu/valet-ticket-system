@@ -179,7 +179,7 @@ if (USE_POSTGRES) {
   db = sqlite;
 }
 
-export { db };
+export { db, USE_POSTGRES };
 
 export function newToken(bytes = 18) {
   return randomBytes(bytes).toString('base64url');

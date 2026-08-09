@@ -22,6 +22,16 @@ const publicDir = join(__dirname, '..', 'public');
 const app = express();
 app.set('trust proxy', true);
 
+// Redirect to custom domain if accessed via Cloud Run URL
+app.use((req, res, next) => {
+  const host = req.get('host');
+  const customDomain = 'valet-ticket-system.ansssol.com';
+  if (host && !host.includes(customDomain) && host.includes('run.app')) {
+    return res.redirect(301, `https://${customDomain}${req.originalUrl}`);
+  }
+  next();
+});
+
 // Photos are base64-encoded in JSON, so allow a generous body size.
 app.use(express.json({ limit: '25mb' }));
 app.use(attachUser);
@@ -66,24 +76,26 @@ const STATUS_LABEL = { parked: 'Parked', requested: 'Requested', ready: 'Ready',
 
 // ---------- auth routes (public) ----------
 
-app.get('/api/auth/status', (req, res) => {
+app.get('/api/auth/status', async (req, res) => {
+  const count = await userCount();
   res.json({
     authenticated: Boolean(req.user),
     user: req.user || null,
-    hasUsers: userCount() > 0,
-    signupCodeRequired: Boolean(SIGNUP_CODE) && userCount() > 0,
+    hasUsers: count > 0,
+    signupCodeRequired: Boolean(SIGNUP_CODE) && count > 0,
   });
 });
 
-app.post('/api/auth/signup', (req, res) => {
+app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, password, displayName, code } = req.body || {};
     // First account bootstraps the system; later signups honor SIGNUP_CODE.
-    if (SIGNUP_CODE && userCount() > 0 && code !== SIGNUP_CODE) {
+    const count = await userCount();
+    if (SIGNUP_CODE && count > 0 && code !== SIGNUP_CODE) {
       return res.status(403).json({ error: 'Invalid or missing signup code.' });
     }
-    const user = createUser({ username, password, displayName });
-    const token = createSession(user.id);
+    const user = await createUser({ username, password, displayName });
+    const token = await createSession(user.id);
     setSessionCookie(res, token, req);
     res.status(201).json({ user });
   } catch (err) {
@@ -91,17 +103,17 @@ app.post('/api/auth/signup', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const user = authenticate(username, password);
+  const user = await authenticate(username, password);
   if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   setSessionCookie(res, token, req);
   res.json({ user });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  destroySession(req.sessionToken);
+app.post('/api/auth/logout', async (req, res) => {
+  await destroySession(req.sessionToken);
   clearSessionCookie(res);
   res.json({ ok: true });
 });

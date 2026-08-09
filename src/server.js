@@ -318,8 +318,9 @@ app.get(['/', '/index.html'], (req, res) => {
 app.use(express.static(publicDir));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`Valet ticket system running on http://localhost:${PORT}`);
   console.log(`  AI vision : ${aiEnabled ? 'Gemini (live)' : 'mock (set GEMINI_API_KEY)'}`);
-  console.log(`  Auth      : ${userCount()} account(s)${SIGNUP_CODE ? ', signup code required' : ''}`);
+  const count = await userCount();
+  console.log(`  Auth      : ${count} account(s)${SIGNUP_CODE ? ', signup code required' : ''}`);
 });

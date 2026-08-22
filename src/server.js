@@ -1,7 +1,7 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { db, getActiveEvent, nextTicketNumber, newToken } from './db.js';
+import { db, getCurrentEvent, getUserEvents, setCurrentEvent, nextTicketNumber, newToken, USE_POSTGRES } from './db.js';
 import { analyzeCarPhotos, aiEnabled } from './services/ai.js';
 import { shareUrl, qrSvg } from './services/share.js';
 import {
@@ -15,6 +15,9 @@ import {
   clearSessionCookie,
   userCount,
   SIGNUP_CODE,
+  createResetToken,
+  verifyResetToken,
+  resetPassword,
 } from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -64,12 +67,14 @@ function normalizePhone(raw) {
   return digits ? '+' + digits : '';
 }
 
-function getTicket(id) {
-  return db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+async function getTicket(id) {
+  const stmt = db.prepare('SELECT * FROM tickets WHERE id = ?');
+  return USE_POSTGRES ? await stmt.get(id) : stmt.get(id);
 }
 
-function getTicketByToken(token) {
-  return db.prepare('SELECT * FROM tickets WHERE public_token = ?').get(token);
+async function getTicketByToken(token) {
+  const stmt = db.prepare('SELECT * FROM tickets WHERE public_token = ?');
+  return USE_POSTGRES ? await stmt.get(token) : stmt.get(token);
 }
 
 const STATUS_LABEL = { parked: 'Parked', requested: 'Requested', ready: 'Ready', delivered: 'Delivered' };
@@ -118,10 +123,53 @@ app.post('/api/auth/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/auth/reset-request', async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    const result = await createResetToken(username);
+    // In production, you would send this token via email instead of returning it
+    // For now, we return it so the frontend can use it
+    res.json({
+      message: 'Reset token created',
+      token: result.token,
+      username: result.username
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/reset-verify', async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    const user = await verifyResetToken(token);
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+    res.json({ valid: true, username: user.username });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+    const user = await resetPassword(token, password);
+    res.json({
+      message: 'Password reset successfully',
+      username: user.username
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ---------- public owner-facing ticket routes (by unguessable token) ----------
 
 async function publicTicketPayload(req, ticket) {
-  const event = db.prepare('SELECT name FROM events WHERE id = ?').get(ticket.event_id);
+  const stmt = db.prepare('SELECT name FROM events WHERE id = ?');
+  const event = USE_POSTGRES ? await stmt.get(ticket.event_id) : stmt.get(ticket.event_id);
   const url = shareUrl(req, ticket.public_token);
   return {
     ticket_number: ticket.ticket_number,
@@ -129,6 +177,7 @@ async function publicTicketPayload(req, ticket) {
     color: ticket.color,
     plate: ticket.plate,
     phone: ticket.phone,
+    notes: ticket.notes,
     front_photo: ticket.front_photo,
     status: ticket.status,
     status_label: STATUS_LABEL[ticket.status] || ticket.status,
@@ -139,21 +188,21 @@ async function publicTicketPayload(req, ticket) {
 }
 
 app.get('/api/t/:token', async (req, res) => {
-  const ticket = getTicketByToken(req.params.token);
+  const ticket = await getTicketByToken(req.params.token);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   res.json(await publicTicketPayload(req, ticket));
 });
 
 // Owner taps "Request my car" on the scanned page.
 app.post('/api/t/:token/request', async (req, res) => {
-  const ticket = getTicketByToken(req.params.token);
+  const ticket = await getTicketByToken(req.params.token);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.status !== 'delivered') {
     db.prepare("UPDATE tickets SET status = 'requested', updated_at = datetime('now') WHERE id = ?").run(
       ticket.id
     );
   }
-  res.json(await publicTicketPayload(req, getTicket(ticket.id)));
+  res.json(await publicTicketPayload(req, await getTicket(ticket.id)));
 });
 
 // ---------- auth gate for everything else under /api ----------
@@ -169,11 +218,11 @@ app.use('/api', (req, res, next) => {
 // ---------- config / status ----------
 
 app.get('/api/config', async (req, res) => {
-  const event = await getActiveEvent();
+  const event = await getCurrentEvent(req.user.id);
   res.json({
     aiEnabled,
     user: req.user,
-    event: { id: event.id, name: event.name },
+    event: event ? { id: event.id, name: event.name } : null,
   });
 });
 
@@ -201,30 +250,96 @@ app.get('/api/updates', (req, res) => {
 
 // ---------- events ----------
 
+// Get all events for the current user
+app.get('/api/events', async (req, res) => {
+  const events = await getUserEvents(req.user.id);
+  const currentEvent = await getCurrentEvent(req.user.id);
+  res.json({ events, current_event_id: currentEvent?.id || null });
+});
+
+// Create a new event for the current user
 app.post('/api/events', async (req, res) => {
   const name = (req.body?.name || '').trim() || 'Valet Event';
-  const { USE_POSTGRES } = await import('./db.js');
   const activeVal = USE_POSTGRES ? true : 1;
-  const inactiveVal = USE_POSTGRES ? false : 0;
 
-  const updateStmt = db.prepare('UPDATE events SET active = ? WHERE active = ?');
-  if (USE_POSTGRES) {
-    await updateStmt.run(inactiveVal, activeVal);
-  } else {
-    updateStmt.run(inactiveVal, activeVal);
-  }
-
-  const insertStmt = db.prepare('INSERT INTO events (name, active) VALUES (?, ?)');
+  const insertStmt = db.prepare('INSERT INTO events (user_id, name, active) VALUES (?, ?, ?)');
   const info = USE_POSTGRES
-    ? await insertStmt.run(name, activeVal)
-    : insertStmt.run(name, activeVal);
+    ? await insertStmt.run(req.user.id, name, activeVal)
+    : insertStmt.run(req.user.id, name, activeVal);
 
   const selectStmt = db.prepare('SELECT * FROM events WHERE id = ?');
   const event = USE_POSTGRES
     ? await selectStmt.get(info.lastInsertRowid)
     : selectStmt.get(info.lastInsertRowid);
 
+  // Auto-select this event if user has no current event
+  const currentEvent = await getCurrentEvent(req.user.id);
+  if (!currentEvent) {
+    await setCurrentEvent(req.user.id, event.id);
+  }
+
   res.status(201).json(event);
+});
+
+// Select an event as the current working event
+app.post('/api/events/:id/select', async (req, res) => {
+  const eventId = parseInt(req.params.id);
+  const stmt = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?');
+  const event = USE_POSTGRES ? await stmt.get(eventId, req.user.id) : stmt.get(eventId, req.user.id);
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  await setCurrentEvent(req.user.id, eventId);
+  res.json({ event, message: 'Event selected' });
+});
+
+// Mark an event as completed
+app.post('/api/events/:id/complete', async (req, res) => {
+  const eventId = parseInt(req.params.id);
+  const stmt = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?');
+  const event = USE_POSTGRES ? await stmt.get(eventId, req.user.id) : stmt.get(eventId, req.user.id);
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  const completedVal = USE_POSTGRES ? true : 1;
+  const updateStmt = db.prepare('UPDATE events SET completed = ? WHERE id = ?');
+  if (USE_POSTGRES) {
+    await updateStmt.run(completedVal, eventId);
+  } else {
+    updateStmt.run(completedVal, eventId);
+  }
+
+  // If this was the current event, clear it
+  if (req.user.current_event_id === eventId) {
+    await setCurrentEvent(req.user.id, null);
+  }
+
+  res.json({ message: 'Event marked as completed' });
+});
+
+// Reopen a completed event
+app.post('/api/events/:id/reopen', async (req, res) => {
+  const eventId = parseInt(req.params.id);
+  const stmt = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?');
+  const event = USE_POSTGRES ? await stmt.get(eventId, req.user.id) : stmt.get(eventId, req.user.id);
+
+  if (!event) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+
+  const completedVal = USE_POSTGRES ? false : 0;
+  const updateStmt = db.prepare('UPDATE events SET completed = ? WHERE id = ?');
+  if (USE_POSTGRES) {
+    await updateStmt.run(completedVal, eventId);
+  } else {
+    updateStmt.run(completedVal, eventId);
+  }
+
+  res.json({ message: 'Event reopened' });
 });
 
 // ---------- AI photo analysis ----------
@@ -245,15 +360,20 @@ app.post('/api/analyze', async (req, res) => {
 // ---------- tickets ----------
 
 app.get('/api/tickets', async (req, res) => {
-  const event = await getActiveEvent();
-  const tickets = db
-    .prepare('SELECT * FROM tickets WHERE event_id = ? ORDER BY ticket_number DESC')
-    .all(event.id);
+  const event = await getCurrentEvent(req.user.id);
+  if (!event) {
+    return res.json({ event: null, tickets: [] });
+  }
+  const stmt = db.prepare('SELECT * FROM tickets WHERE event_id = ? ORDER BY ticket_number DESC');
+  const tickets = USE_POSTGRES ? await stmt.all(event.id) : stmt.all(event.id);
   res.json({ event: { id: event.id, name: event.name }, tickets });
 });
 
 app.post('/api/tickets', async (req, res) => {
-  const event = await getActiveEvent();
+  const event = await getCurrentEvent(req.user.id);
+  if (!event) {
+    return res.status(400).json({ error: 'No active event selected. Please create or select an event first.' });
+  }
   const phone = normalizePhone(req.body?.phone);
   if (!phone) return res.status(400).json({ error: 'A valid phone number is required.' });
 
@@ -282,8 +402,8 @@ app.post('/api/tickets', async (req, res) => {
   res.status(201).json(newTicket);
 });
 
-app.patch('/api/tickets/:id', (req, res) => {
-  const ticket = getTicket(req.params.id);
+app.patch('/api/tickets/:id', async (req, res) => {
+  const ticket = await getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const fields = ['plate', 'make_model', 'color', 'notes', 'status'];
@@ -303,8 +423,13 @@ app.patch('/api/tickets/:id', (req, res) => {
 
   updates.push("updated_at = datetime('now')");
   values.push(ticket.id);
-  db.prepare(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-  const updatedTicket = getTicket(ticket.id);
+  const updateStmt = db.prepare(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`);
+  if (USE_POSTGRES) {
+    await updateStmt.run(...values);
+  } else {
+    updateStmt.run(...values);
+  }
+  const updatedTicket = await getTicket(ticket.id);
 
   // Broadcast update to all connected clients
   broadcastUpdate('ticket_updated', { ticket: updatedTicket });
@@ -312,12 +437,23 @@ app.patch('/api/tickets/:id', (req, res) => {
   res.json(updatedTicket);
 });
 
-app.delete('/api/tickets/:id', (req, res) => {
-  const ticket = getTicket(req.params.id);
+app.delete('/api/tickets/:id', async (req, res) => {
+  const ticket = await getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   // Delete associated messages first to avoid foreign key constraint error
-  db.prepare('DELETE FROM messages WHERE ticket_id = ?').run(ticket.id);
-  db.prepare('DELETE FROM tickets WHERE id = ?').run(ticket.id);
+  const deleteMessages = db.prepare('DELETE FROM messages WHERE ticket_id = ?');
+  if (USE_POSTGRES) {
+    await deleteMessages.run(ticket.id);
+  } else {
+    deleteMessages.run(ticket.id);
+  }
+
+  const deleteTicket = db.prepare('DELETE FROM tickets WHERE id = ?');
+  if (USE_POSTGRES) {
+    await deleteTicket.run(ticket.id);
+  } else {
+    deleteTicket.run(ticket.id);
+  }
 
   // Broadcast update to all connected clients
   broadcastUpdate('ticket_deleted', { id: ticket.id });

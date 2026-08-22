@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Reset Password · Valet Ticket System</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅿️</text></svg>" />
+  <style>
+    .auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .auth-card { width: 100%; max-width: 400px; }
+    .auth-head { text-align: center; margin-bottom: 18px; }
+    .auth-head .logo { font-size: 44px; }
+    .auth-head h1 { font-size: 20px; margin: 8px 0 2px; }
+    .auth-head p { color: var(--muted); font-size: 13px; margin: 0; }
+    .switch { text-align: center; font-size: 13px; color: var(--muted); margin-top: 14px; }
+    .switch a { color: var(--accent); cursor: pointer; font-weight: 600; text-decoration: none; }
+    #resetLink { margin-top: 16px; padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; word-break: break-all; font-size: 13px; display: none; }
+    #resetLink a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="card auth-card">
+      <div class="auth-head">
+        <div class="logo">🅿️</div>
+        <h1>Reset Password</h1>
+        <p>Enter your username to receive a password reset link</p>
+      </div>
+
+      <label class="field"><span>Username</span>
+        <input id="username" type="text" autocomplete="username" autocapitalize="none" autofocus />
+      </label>
+
+      <button id="submitBtn" class="primary-btn big">Request Reset</button>
+      <div id="authMsg" class="inline-msg"></div>
+
+      <div id="resetLink"></div>
+
+      <div class="switch">
+        <a href="/login.html">Back to Sign in</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+
+    async function submit() {
+      const btn = $('#submitBtn');
+      const msg = $('#authMsg');
+      const linkDiv = $('#resetLink');
+      msg.className = 'inline-msg';
+      msg.textContent = '';
+      linkDiv.style.display = 'none';
+
+      const username = $('#username').value.trim();
+      if (!username) {
+        msg.className = 'inline-msg err';
+        msg.textContent = 'Enter your username.';
+        return;
+      }
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/reset-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Something went wrong');
+
+        msg.className = 'inline-msg success';
+        msg.textContent = 'Reset token created! Use the link below to reset your password.';
+
+        // In production, this would be sent via email instead of displayed
+        const resetUrl = `${location.origin}/reset-password.html?token=${encodeURIComponent(data.token)}`;
+        linkDiv.innerHTML = `<strong>Reset Link:</strong><br><a href="${resetUrl}">${resetUrl}</a>`;
+        linkDiv.style.display = 'block';
+
+        $('#username').value = '';
+      } catch (err) {
+        msg.className = 'inline-msg err';
+        msg.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    $('#submitBtn').addEventListener('click', submit);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+  </script>
+</body>
+</html>

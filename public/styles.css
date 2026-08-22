@@ -186,3 +186,128 @@ input:-webkit-autofill:focus {
 }
 .toast.ok { border-color: var(--accent-2); }
 .toast.err { border-color: var(--danger); }
+
+/* Event Management Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 32px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: var(--text);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.event-create-section, .event-list-section {
+  margin-bottom: 30px;
+}
+
+.event-create-section h3, .event-list-section h3 {
+  font-size: 16px;
+  margin: 0 0 12px 0;
+  color: var(--accent);
+}
+
+.event-create-section .field {
+  display: flex;
+  gap: 10px;
+}
+
+.event-create-section input {
+  flex: 1;
+}
+
+.events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.event-item.selected {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.1);
+}
+
+.event-item.completed {
+  opacity: 0.6;
+}
+
+.event-info {
+  flex: 1;
+}
+
+.event-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.event-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.event-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.event-actions button {
+  padding: 6px 12px;
+  font-size: 12px;
+}

@@ -19,11 +19,42 @@
     </div>
     <div class="status-pills">
       <span id="pillAi" class="pill">AI</span>
-      <button id="newEventBtn" class="ghost-btn" title="Start a new event">New event</button>
+      <button id="eventsBtn" class="ghost-btn" title="Manage events">Events</button>
       <span id="userChip" class="pill" title="Signed in"></span>
       <button id="logoutBtn" class="ghost-btn" title="Sign out">Sign out</button>
     </div>
   </header>
+
+  <!-- Event Management Modal -->
+  <div id="eventModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Event Management</h2>
+        <button id="closeModal" class="close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Create New Event -->
+        <div class="event-create-section">
+          <h3>Create New Event</h3>
+          <div class="field">
+            <input id="newEventName" type="text" placeholder="e.g., Wedding Reception, Corporate Gala" />
+            <button id="createEventBtn" class="primary-btn">Create Event</button>
+          </div>
+          <div id="createEventMsg" class="inline-msg"></div>
+        </div>
+
+        <!-- Active Events -->
+        <div class="event-list-section">
+          <h3>Your Events</h3>
+          <div id="activeEventsList" class="events-list"></div>
+          <div id="noEventsMsg" style="display:none; color: var(--muted); text-align: center; padding: 20px;">
+            No events yet. Create one above to get started.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <main>
     <!-- Intake card -->

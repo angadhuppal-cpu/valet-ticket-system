@@ -47,7 +47,13 @@ function fileToPhoto(file) {
 // ---------- config ----------
 async function loadConfig() {
   state.config = await api('/api/config');
-  $('#eventName').textContent = state.config.event.name;
+  const eventName = $('#eventName');
+  if (state.config.event) {
+    eventName.textContent = state.config.event.name;
+  } else {
+    eventName.textContent = 'No event selected';
+    eventName.style.color = 'var(--warn)';
+  }
   const ai = $('#pillAi');
   ai.textContent = state.config.aiEnabled ? 'AI · live' : 'AI · demo';
   ai.className = 'pill ' + (state.config.aiEnabled ? 'live' : 'mock');
@@ -59,6 +65,191 @@ async function loadConfig() {
 $('#logoutBtn').addEventListener('click', async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
   location.href = '/login.html';
+});
+
+// ---------- event management ----------
+let allEvents = [];
+
+async function loadEvents() {
+  const data = await api('/api/events');
+  allEvents = data.events || [];
+  const currentId = data.current_event_id;
+  renderEventsList(currentId);
+}
+
+function renderEventsList(currentId) {
+  const list = $('#activeEventsList');
+  const noMsg = $('#noEventsMsg');
+
+  if (!allEvents || allEvents.length === 0) {
+    list.innerHTML = '';
+    noMsg.style.display = 'block';
+    return;
+  }
+
+  noMsg.style.display = 'none';
+
+  // Separate active and completed events
+  const activeEvents = allEvents.filter(e => !e.completed);
+  const completedEvents = allEvents.filter(e => e.completed);
+
+  list.innerHTML = '';
+
+  if (activeEvents.length > 0) {
+    const activeHeader = document.createElement('h4');
+    activeHeader.textContent = 'Active Events';
+    activeHeader.style.fontSize = '14px';
+    activeHeader.style.color = 'var(--accent)';
+    activeHeader.style.marginBottom = '8px';
+    list.appendChild(activeHeader);
+
+    activeEvents.forEach(event => {
+      list.appendChild(createEventItem(event, currentId));
+    });
+  }
+
+  if (completedEvents.length > 0) {
+    const completedHeader = document.createElement('h4');
+    completedHeader.textContent = 'Completed Events';
+    completedHeader.style.fontSize = '14px';
+    completedHeader.style.color = 'var(--muted)';
+    completedHeader.style.marginTop = '20px';
+    completedHeader.style.marginBottom = '8px';
+    list.appendChild(completedHeader);
+
+    completedEvents.forEach(event => {
+      list.appendChild(createEventItem(event, currentId));
+    });
+  }
+}
+
+function createEventItem(event, currentId) {
+  const item = document.createElement('div');
+  item.className = 'event-item';
+  if (event.id === currentId) item.classList.add('selected');
+  if (event.completed) item.classList.add('completed');
+
+  const info = document.createElement('div');
+  info.className = 'event-info';
+
+  const name = document.createElement('div');
+  name.className = 'event-name';
+  name.textContent = event.name + (event.id === currentId ? ' (Current)' : '');
+
+  const meta = document.createElement('div');
+  meta.className = 'event-meta';
+  const date = new Date(event.created_at).toLocaleDateString();
+  meta.textContent = `Created: ${date}${event.completed ? ' · Completed' : ''}`;
+
+  info.appendChild(name);
+  info.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'event-actions';
+
+  if (!event.completed) {
+    if (event.id !== currentId) {
+      const selectBtn = document.createElement('button');
+      selectBtn.className = 'ghost-btn';
+      selectBtn.textContent = 'Select';
+      selectBtn.onclick = () => selectEvent(event.id);
+      actions.appendChild(selectBtn);
+    }
+
+    const completeBtn = document.createElement('button');
+    completeBtn.className = 'ghost-btn';
+    completeBtn.textContent = 'Complete';
+    completeBtn.onclick = () => completeEvent(event.id);
+    actions.appendChild(completeBtn);
+  } else {
+    const reopenBtn = document.createElement('button');
+    reopenBtn.className = 'ghost-btn';
+    reopenBtn.textContent = 'Reopen';
+    reopenBtn.onclick = () => reopenEvent(event.id);
+    actions.appendChild(reopenBtn);
+  }
+
+  item.appendChild(info);
+  item.appendChild(actions);
+
+  return item;
+}
+
+async function selectEvent(eventId) {
+  try {
+    await api(`/api/events/${eventId}/select`, { method: 'POST' });
+    toast('Event selected');
+    await loadConfig();
+    await loadEvents();
+    await loadTickets();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function completeEvent(eventId) {
+  if (!confirm('Mark this event as completed? You can reopen it later if needed.')) return;
+  try {
+    await api(`/api/events/${eventId}/complete`, { method: 'POST' });
+    toast('Event marked as completed');
+    await loadConfig();
+    await loadEvents();
+    await loadTickets();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function reopenEvent(eventId) {
+  try {
+    await api(`/api/events/${eventId}/reopen`, { method: 'POST' });
+    toast('Event reopened');
+    await loadEvents();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+// Event modal controls
+$('#eventsBtn').addEventListener('click', () => {
+  $('#eventModal').style.display = 'flex';
+  loadEvents();
+});
+
+$('#closeModal').addEventListener('click', () => {
+  $('#eventModal').style.display = 'none';
+});
+
+$('#eventModal').addEventListener('click', (e) => {
+  if (e.target === $('#eventModal')) {
+    $('#eventModal').style.display = 'none';
+  }
+});
+
+$('#createEventBtn').addEventListener('click', async () => {
+  const input = $('#newEventName');
+  const msg = $('#createEventMsg');
+  const name = input.value.trim();
+
+  if (!name) {
+    msg.textContent = 'Please enter an event name';
+    msg.className = 'inline-msg err';
+    return;
+  }
+
+  try {
+    await api('/api/events', { method: 'POST', body: { name } });
+    input.value = '';
+    msg.textContent = 'Event created successfully';
+    msg.className = 'inline-msg success';
+    setTimeout(() => { msg.textContent = ''; }, 2000);
+    await loadConfig();
+    await loadEvents();
+    await loadTickets();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'inline-msg err';
+  }
 });
 
 // ---------- tabs ----------

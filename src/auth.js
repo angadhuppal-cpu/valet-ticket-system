@@ -35,7 +35,7 @@ export async function createUser({ username, password, displayName }) {
   const info = USE_POSTGRES
     ? await stmt2.run(uname, (displayName || uname).trim(), hashPassword(password))
     : stmt2.run(uname, (displayName || uname).trim(), hashPassword(password));
-  const stmt3 = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?');
+  const stmt3 = db.prepare('SELECT id, username, display_name, current_event_id FROM users WHERE id = ?');
   return USE_POSTGRES ? await stmt3.get(info.lastInsertRowid) : stmt3.get(info.lastInsertRowid);
 }
 
@@ -44,7 +44,7 @@ export async function authenticate(username, password) {
   const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
   const user = USE_POSTGRES ? await stmt.get(uname) : stmt.get(uname);
   if (!user || !verifyPassword(password, user.password_hash)) return null;
-  return { id: user.id, username: user.username, display_name: user.display_name };
+  return { id: user.id, username: user.username, display_name: user.display_name, current_event_id: user.current_event_id };
 }
 
 export async function userCount() {
@@ -79,7 +79,7 @@ export async function destroySession(token) {
 async function sessionUser(token) {
   if (!token) return null;
   const stmt = db.prepare(
-    `SELECT u.id, u.username, u.display_name, s.expires_at
+    `SELECT u.id, u.username, u.display_name, u.current_event_id, s.expires_at
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token = ?`
   );
@@ -89,7 +89,7 @@ async function sessionUser(token) {
     await destroySession(token);
     return null;
   }
-  return { id: row.id, username: row.username, display_name: row.display_name };
+  return { id: row.id, username: row.username, display_name: row.display_name, current_event_id: row.current_event_id };
 }
 
 // ---------- cookies ----------
@@ -134,4 +134,86 @@ export async function attachUser(req, _res, next) {
 export function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   next();
+}
+
+// ---------- password reset ----------
+const RESET_TOKEN_HOURS = 1; // Reset tokens expire in 1 hour
+
+export async function createResetToken(username) {
+  const uname = String(username || '').trim().toLowerCase();
+  const stmt1 = db.prepare('SELECT id FROM users WHERE username = ?');
+  const user = USE_POSTGRES ? await stmt1.get(uname) : stmt1.get(uname);
+  if (!user) throw new Error('User not found');
+
+  const token = newToken(24);
+  const expires = new Date(Date.now() + RESET_TOKEN_HOURS * 36e5).toISOString();
+
+  // Delete any existing reset tokens for this user
+  const deleteStmt = db.prepare('DELETE FROM reset_tokens WHERE user_id = ?');
+  if (USE_POSTGRES) {
+    await deleteStmt.run(user.id);
+  } else {
+    deleteStmt.run(user.id);
+  }
+
+  // Create new reset token
+  const insertStmt = db.prepare('INSERT INTO reset_tokens (token, user_id, expires_at) VALUES (?, ?, ?)');
+  if (USE_POSTGRES) {
+    await insertStmt.run(token, user.id, expires);
+  } else {
+    insertStmt.run(token, user.id, expires);
+  }
+
+  return { token, username: user.username || uname };
+}
+
+export async function verifyResetToken(token) {
+  if (!token) return null;
+  const stmt = db.prepare(
+    `SELECT u.id, u.username, u.display_name, u.current_event_id, r.expires_at
+     FROM reset_tokens r JOIN users u ON u.id = r.user_id
+     WHERE r.token = ?`
+  );
+  const row = USE_POSTGRES ? await stmt.get(token) : stmt.get(token);
+  if (!row) return null;
+
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    // Token expired, clean it up
+    const deleteStmt = db.prepare('DELETE FROM reset_tokens WHERE token = ?');
+    if (USE_POSTGRES) {
+      await deleteStmt.run(token);
+    } else {
+      deleteStmt.run(token);
+    }
+    return null;
+  }
+
+  return { id: row.id, username: row.username, display_name: row.display_name, current_event_id: row.current_event_id };
+}
+
+export async function resetPassword(token, newPassword) {
+  const user = await verifyResetToken(token);
+  if (!user) throw new Error('Invalid or expired reset token');
+
+  if (String(newPassword || '').length < 6) {
+    throw new Error('Password must be at least 6 characters.');
+  }
+
+  // Update password
+  const updateStmt = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+  if (USE_POSTGRES) {
+    await updateStmt.run(hashPassword(newPassword), user.id);
+  } else {
+    updateStmt.run(hashPassword(newPassword), user.id);
+  }
+
+  // Delete the used reset token
+  const deleteStmt = db.prepare('DELETE FROM reset_tokens WHERE token = ?');
+  if (USE_POSTGRES) {
+    await deleteStmt.run(token);
+  } else {
+    deleteStmt.run(token);
+  }
+
+  return user;
 }

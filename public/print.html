@@ -25,6 +25,7 @@
     .stub .car { font-size: 18px; font-weight: 700; }
     .stub .plate { display: inline-block; font-family: ui-monospace, Menlo, monospace; letter-spacing: 2px; border: 1px solid #0b1220; border-radius: 6px; padding: 3px 10px; margin-top: 8px; }
     .stub .phone { font-size: 14px; color: #4a5878; margin-top: 8px; }
+    .stub .notes { font-size: 14px; color: #0b1220; margin-top: 8px; font-style: italic; }
     .car-photo { width: 100%; max-width: 280px; height: auto; margin: 12px auto; border-radius: 8px; border: 1px solid #c7cede; }
 
     @media print {
@@ -52,6 +53,7 @@
     <div class="car" id="car"></div>
     <div id="plateWrap"><span class="plate" id="plate"></span></div>
     <div class="phone" id="phone"></div>
+    <div class="notes" id="notes"></div>
     <hr class="divider" />
     <img id="carPhoto" class="car-photo" style="display:none" />
   </div>
@@ -77,6 +79,8 @@
         if (t.plate) document.getElementById('plate').textContent = t.plate;
         else document.getElementById('plateWrap').style.display = 'none';
         if (t.phone) document.getElementById('phone').textContent = '📱 ' + t.phone;
+        if (t.notes) document.getElementById('notes').textContent = '📝 ' + t.notes;
+        else document.getElementById('notes').style.display = 'none';
         if (t.front_photo) {
           const img = document.getElementById('carPhoto');
           img.src = t.front_photo;

@@ -17,11 +17,12 @@ if (USE_POSTGRES) {
   // Create tables for PostgreSQL
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id            SERIAL PRIMARY KEY,
-      username      TEXT NOT NULL UNIQUE,
-      display_name  TEXT,
-      password_hash TEXT NOT NULL,
-      created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      id               SERIAL PRIMARY KEY,
+      username         TEXT NOT NULL UNIQUE,
+      display_name     TEXT,
+      password_hash    TEXT NOT NULL,
+      current_event_id INTEGER,
+      created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -33,8 +34,10 @@ if (USE_POSTGRES) {
 
     CREATE TABLE IF NOT EXISTS events (
       id         SERIAL PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name       TEXT NOT NULL,
       active     BOOLEAN NOT NULL DEFAULT TRUE,
+      completed  BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -64,6 +67,13 @@ if (USE_POSTGRES) {
       counterpart TEXT,
       delivered   BOOLEAN NOT NULL DEFAULT TRUE,
       created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS reset_tokens (
+      token      TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL
     );
   `);
 
@@ -111,11 +121,12 @@ if (USE_POSTGRES) {
     PRAGMA journal_mode = WAL;
 
     CREATE TABLE IF NOT EXISTS users (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      username      TEXT NOT NULL UNIQUE,
-      display_name  TEXT,
-      password_hash TEXT NOT NULL,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      username         TEXT NOT NULL UNIQUE,
+      display_name     TEXT,
+      password_hash    TEXT NOT NULL,
+      current_event_id INTEGER,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -127,8 +138,10 @@ if (USE_POSTGRES) {
 
     CREATE TABLE IF NOT EXISTS events (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name       TEXT NOT NULL,
       active     INTEGER NOT NULL DEFAULT 1,
+      completed  INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -159,6 +172,13 @@ if (USE_POSTGRES) {
       delivered   INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS reset_tokens (
+      token      TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    );
   `);
 
   // Lightweight migrations for databases created before a column existed
@@ -170,6 +190,9 @@ if (USE_POSTGRES) {
   }
   ensureColumn('tickets', 'public_token', 'TEXT');
   ensureColumn('tickets', 'front_photo', 'TEXT');
+  ensureColumn('events', 'user_id', 'INTEGER');
+  ensureColumn('events', 'completed', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('users', 'current_event_id', 'INTEGER');
 
   // Backfill share tokens for any legacy tickets missing one
   for (const row of sqlite.prepare('SELECT id FROM tickets WHERE public_token IS NULL').all()) {
@@ -185,26 +208,49 @@ export function newToken(bytes = 18) {
   return randomBytes(bytes).toString('base64url');
 }
 
-// Ensure there is always an active event to attach tickets to.
-export async function getActiveEvent() {
-  const getter = db.prepare('SELECT * FROM events WHERE active = ? ORDER BY id DESC LIMIT 1');
-  let ev = USE_POSTGRES
-    ? await getter.get(true)
-    : getter.get(USE_POSTGRES ? true : 1);
+// Get the current working event for a user (from user.current_event_id).
+// If no current event, return the first active event or null.
+export async function getCurrentEvent(userId) {
+  const userStmt = db.prepare('SELECT current_event_id FROM users WHERE id = ?');
+  const user = USE_POSTGRES ? await userStmt.get(userId) : userStmt.get(userId);
 
-  if (!ev) {
-    const inserter = db.prepare('INSERT INTO events (name, active) VALUES (?, ?)');
-    const info = USE_POSTGRES
-      ? await inserter.run('Valet Event', true)
-      : inserter.run('Valet Event', 1);
-
-    const fetchNew = db.prepare('SELECT * FROM events WHERE id = ?');
-    ev = USE_POSTGRES
-      ? await fetchNew.get(info.lastInsertRowid)
-      : fetchNew.get(info.lastInsertRowid);
+  if (user && user.current_event_id) {
+    const eventStmt = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?');
+    const ev = USE_POSTGRES
+      ? await eventStmt.get(user.current_event_id, userId)
+      : eventStmt.get(user.current_event_id, userId);
+    if (ev) return ev;
   }
 
-  return ev;
+  // Fall back to first active event for this user
+  const activeVal = USE_POSTGRES ? true : 1;
+  const stmt = db.prepare('SELECT * FROM events WHERE user_id = ? AND active = ? ORDER BY id DESC LIMIT 1');
+  return USE_POSTGRES ? await stmt.get(userId, activeVal) : stmt.get(userId, activeVal);
+}
+
+// Get all events for a user
+export async function getUserEvents(userId) {
+  const stmt = db.prepare('SELECT * FROM events WHERE user_id = ? ORDER BY created_at DESC');
+  return USE_POSTGRES ? await stmt.all(userId) : stmt.all(userId);
+}
+
+// Set the user's current working event
+export async function setCurrentEvent(userId, eventId) {
+  const stmt = db.prepare('UPDATE users SET current_event_id = ? WHERE id = ?');
+  if (USE_POSTGRES) {
+    await stmt.run(eventId, userId);
+  } else {
+    stmt.run(eventId, userId);
+  }
+}
+
+// Legacy function for backward compatibility - delegates to getCurrentEvent
+export async function getActiveEvent() {
+  // This is kept for any old code that might still use it
+  // In multi-tenant mode, we need a user ID, so this will need refactoring
+  const getter = db.prepare('SELECT * FROM events WHERE active = ? ORDER BY id DESC LIMIT 1');
+  const activeVal = USE_POSTGRES ? true : 1;
+  return USE_POSTGRES ? await getter.get(activeVal) : getter.get(activeVal);
 }
 
 export async function nextTicketNumber(eventId) {

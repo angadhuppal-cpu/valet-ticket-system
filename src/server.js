@@ -195,14 +195,38 @@ app.get('/api/t/:token', async (req, res) => {
 
 // Owner taps "Request my car" on the scanned page.
 app.post('/api/t/:token/request', async (req, res) => {
-  const ticket = await getTicketByToken(req.params.token);
-  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-  if (ticket.status !== 'delivered') {
-    db.prepare("UPDATE tickets SET status = 'requested', updated_at = datetime('now') WHERE id = ?").run(
-      ticket.id
-    );
+  try {
+    const ticket = await getTicketByToken(req.params.token);
+    if (!ticket) {
+      console.log('❌ Request failed: Ticket not found for token:', req.params.token);
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    console.log(`🚗 Request my car: Ticket #${ticket.ticket_number}, current status: ${ticket.status}`);
+
+    // Only allow transition from 'parked' to 'requested'
+    if (ticket.status === 'parked') {
+      const stmt = db.prepare("UPDATE tickets SET status = 'requested', updated_at = datetime('now') WHERE id = ?");
+      if (USE_POSTGRES) {
+        await stmt.run(ticket.id);
+      } else {
+        stmt.run(ticket.id);
+      }
+      console.log(`✅ Ticket #${ticket.ticket_number} updated to 'requested'`);
+
+      // Broadcast update to operator dashboard
+      const updatedTicket = await getTicket(ticket.id);
+      broadcastUpdate('ticket_updated', { ticket: updatedTicket });
+    } else {
+      console.log(`⚠️  Ticket #${ticket.ticket_number} cannot be requested (status: ${ticket.status})`);
+    }
+
+    const payload = await publicTicketPayload(req, await getTicket(ticket.id));
+    res.json(payload);
+  } catch (err) {
+    console.error('❌ Error in /api/t/:token/request:', err);
+    res.status(500).json({ error: 'Failed to process request' });
   }
-  res.json(await publicTicketPayload(req, await getTicket(ticket.id)));
 });
 
 // ---------- auth gate for everything else under /api ----------
